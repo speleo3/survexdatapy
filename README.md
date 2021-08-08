@@ -1,3 +1,5 @@
+[![CI](https://github.com/speleo3/survexdatapy/actions/workflows/ci.yml/badge.svg)](https://github.com/speleo3/survexdatapy/actions/workflows/ci.yml)
+
 # survexdata
 
 Python module for reading [Survex](https://survex.com/)
