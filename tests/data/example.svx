@@ -1,0 +1,9 @@
+*data default
+
+A B 10 20 30
+B C 11 22 33
+
+*data normal ignore to from clino tape compass
+
+# D C 36 12 24
+# E D 39 13 26

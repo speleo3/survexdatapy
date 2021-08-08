@@ -1,0 +1,22 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Install system dependencies
+      run: >
+        sudo apt-get update;
+        sudo apt-get install -yq
+        python3-pip
+        python3-pytest
+
+    - name: Install
+      run: sudo python3 -m pip install -q .
+
+    - name: Test
+      run: python3 -m pytest
