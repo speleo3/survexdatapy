@@ -40,7 +40,7 @@ print("Total length:", sum(leg[Column.TAPE] for leg in parser.iterdata()))
 Command line usage to convert to a supported format (to STDOUT):
 
 ```bash
-python -m survexdata example.svx --csv
+python -m survexdata example.svx --spelix
 ```
 
 ## License
