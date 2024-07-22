@@ -1,4 +1,6 @@
 import survexdata
+import survexdata as m
+from survexdata import Column
 import csv
 import io
 import pathlib
@@ -64,3 +66,92 @@ def test_dataiter():
     parser.parseFile(DATA / "example.svx")
     assert sum(leg[survexdata.Column.TAPE]
                for leg in parser.iterdata()) == 46.0
+
+
+def test_angleDiff():
+    assert m.angleDiff(10, 15) == -5
+    assert m.angleDiff(15, 10) == 5
+
+
+def test_absAngleDiff():
+    assert m.absAngleDiff(10, 15) == 5
+    assert m.absAngleDiff(15, 10) == 5
+    assert m.absAngleDiff(355, 5) == 10
+    assert m.absAngleDiff(355, 5) == 10
+    assert m.absAngleDiff(5, 355) == 10
+    assert m.absAngleDiff(5, 355 + 360 * 2) == 10
+    assert m.absAngleDiff(5, 355 + 360 * 3) == 10
+    assert m.absAngleDiff(5, 355 + 360 * 4) == 10
+    assert m.absAngleDiff(5, -3) == 8
+    assert m.absAngleDiff(-5, 3) == 8
+
+
+def test_tapeIsSame():
+    assert m.tapeIsSame(0.42, 0.44)
+    assert not m.tapeIsSame(0.42, 0.64)
+    assert m.tapeIsSame(8.42, 8.44)
+    assert not m.tapeIsSame(8.0, 9.5)
+
+
+def test_shotIsSame():
+    assert not m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 23.4, Column.CLINO: -12.3},
+        {})
+    assert m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 23.4, Column.CLINO: -12.3},
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 23.4, Column.CLINO: -12.3})
+    assert m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 23.4, Column.CLINO: -12.3},
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.9, Column.COMPASS: 23.0, Column.CLINO: -12.0})
+    assert m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.9, Column.COMPASS: 23.0, Column.CLINO: -12.0},
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 23.4, Column.CLINO: -12.3})
+    assert not m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 23.4, Column.CLINO: -12.3},
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 16.3, Column.COMPASS: 23.4, Column.CLINO: -12.3})
+    assert not m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 23.4, Column.CLINO: -12.3},
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 26.4, Column.CLINO: -12.3})
+    assert not m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 23.4, Column.CLINO: -12.3},
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 23.4, Column.CLINO: -16.3})
+    assert m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 359.5, Column.CLINO: -0.5},
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 0.5, Column.CLINO: 0.5})
+    assert not m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 359.5, Column.CLINO: -0.5},
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 3.5, Column.CLINO: 0.5})
+    assert not m.shotIsSame(
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 359.5, Column.CLINO: -0.5},
+        {Column.FROM: "a", Column.TO: "b", Column.TAPE: 12.3, Column.COMPASS: 0.5, Column.CLINO: 3.5})
+
+
+REF_DUPS_ROWS = """
+prev  : {FROM: 'A', TO: '..', TAPE: 10.1, COMPASS: 20.4, CLINO: 30.0, _FILE: '/dups.svx:3'}
+  1/ 1: {FROM: 'A', TO: '..', TAPE: 10.11, COMPASS: 20.5, CLINO: 30.0, _FILE: '/dups.svx:4'}
+  2/ 2: {FROM: 'A', TO: '..', TAPE: 10.12, COMPASS: 20.3, CLINO: 30.0, _FILE: '/dups.svx:5'}
+ check: leg? /dups.svx:5
+prev  : {FROM: 'A', TO: 'B', TAPE: 30.0, COMPASS: 40.0, CLINO: 50.0, _FILE: '/dups.svx:6'}
+  D  1: {FROM: 'A', TO: 'B', TAPE: 30.0, COMPASS: 40.0, CLINO: 50.0, _FILE: '/dups.svx:7'}
+  D  2: {FROM: 'A', TO: 'B', TAPE: 30.0, COMPASS: 40.0, CLINO: 50.1, _FILE: '/dups.svx:8'}
+prev  : {FROM: 'B', TO: 'C', TAPE: 20.0, COMPASS: 30.0, CLINO: 40.6, _FILE: '/dups.svx:9'}
+  L  1: {FROM: 'C', TO: 'D', TAPE: 20.0, COMPASS: 30.0, CLINO: 40.5, _FILE: '/dups.svx:10'}
+ check: dup? /dups.svx:10
+""".lstrip().splitlines()
+
+
+@pytest.mark.parametrize("filename,rows_ref", [
+    ("example.svx", []),
+    ("dups.svx", REF_DUPS_ROWS),
+])
+def test_FindDuplicateFormatter(filename: str, rows_ref: list):
+    stream = io.StringIO()
+
+    parser = survexdata.SvxParser()
+    parser.parseFile(DATA / filename)
+    parser.dump(survexdata.FindDuplicateFormatter(stream))
+
+    stream.seek(0)
+    rows = [row.replace(DATA.as_posix(), "").rstrip() for row in stream]
+
+    assert rows == rows_ref

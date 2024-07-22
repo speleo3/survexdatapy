@@ -105,6 +105,7 @@ class Column(UpperCaseStringEnum):
     Y = auto()
     Z = auto()
     DATE = auto()  # custom
+    NEWLINE = auto()
 
     # aliases
     ALTITUDE = DZ
@@ -119,6 +120,12 @@ class Column(UpperCaseStringEnum):
     GRADIENT = CLINO
     LENGTH = TAPE
     NORTHING = DY
+
+    # DEBUG
+    _FILE = auto()
+
+    def __repr__(self):
+        return self.value
 
 
 class Units(UpperCaseStringEnum):
@@ -274,6 +281,111 @@ class SpelixCsvFormatter(Formatter):
             file=self.file)
 
 
+def angleDiff(a: float, b: float) -> float:
+    """
+    Angle difference in the shorter direction.
+
+    Args:
+      a: Angle in degrees
+      b: Angle in degrees
+    """
+    d = (a - b) % 360
+    return d - 360 if d > 180 else d
+
+
+def absAngleDiff(a: float, b: float) -> float:
+    """
+    Absolute angle difference in the shorter direction.
+
+    Args:
+      a: Angle in degrees
+      b: Angle in degrees
+    """
+    return abs(angleDiff(a, b))
+
+
+def tapeIsSame(a: float, b: float) -> bool:
+    """
+    True if given tape readings are approximately the same.
+
+    Args:
+      a: Distance in meters
+      b: Distance in meters
+    """
+    if a < 2:
+        if 0.8 < (a / b) < 1.2:
+            return True
+        return abs(a - b) < 0.05
+    return 0.9 < (a / b) < 1.1
+
+
+def shotIsSame(lhs: DataDict, rhs: DataDict) -> bool:
+    """
+    True if given shots are approximately the same.
+
+    Args:
+      lhs: "Left-hand-side" shot to compare (cannot be empty)
+      rhs: "Right-hand-side" shot to compare (can be empty dict)
+    """
+    return bool(rhs and rhs[Column.TAPE]
+                and tapeIsSame(lhs[Column.TAPE], rhs[Column.TAPE])
+                and absAngleDiff(lhs[Column.CLINO], rhs[Column.CLINO]) < 2
+                and absAngleDiff(lhs[Column.COMPASS], rhs[Column.COMPASS]) < 2)
+
+
+class FindDuplicateFormatter(Formatter):
+    def __init__(self, file=None):
+        self._prev = {}
+        self._count_consecutive = 0
+        self._count_consecutive_splays = 0
+        self._count_consecutive_legs = 0
+        super().__init__(file)
+
+    def skipAnonymousStations(self):
+        return False
+
+    def printDataLine(self, data):
+        if shotIsSame(data, self._prev):
+            self._count_consecutive += 1
+            is_anon = (
+                data[Column.TO] in ANONYMOUS_STATIONS,
+                self._prev[Column.TO] in ANONYMOUS_STATIONS,
+            )
+            same_leg = (data[Column.FROM] == self._prev[Column.FROM]
+                        and data[Column.TO] == self._prev[Column.TO])
+            if all(is_anon):
+                self._count_consecutive_splays += 1
+                indicator = f"{self._count_consecutive_splays:2d}/"
+            elif any(is_anon):
+                self._count_consecutive_splays = 0
+                indicator = "   "
+            elif same_leg:
+                self._count_consecutive_splays = 0
+                indicator = " D "
+            else:
+                self._count_consecutive_legs += 1
+                self._count_consecutive_splays = 0
+                indicator = " L "
+            if self._count_consecutive < 2:
+                print("prev  :", self._prev, file=self.file)
+            print(f" {indicator}{self._count_consecutive:2d}:", data, file=self.file)
+        else:
+            self._reset_consecutive()
+        self._prev = data
+
+    def printFooter(self):
+        self._reset_consecutive()
+
+    def _reset_consecutive(self):
+        if self._count_consecutive_splays >= 2:
+            print(f" check: leg? {self._prev[Column._FILE]}", file=self.file)
+        if self._count_consecutive_legs >= 1:
+            print(f" check: dup? {self._prev[Column._FILE]}", file=self.file)
+        self._count_consecutive = 0
+        self._count_consecutive_legs = 0
+        self._count_consecutive_splays = 0
+
+
 class VisualTopoFormatter(Formatter):
     declination = 0
     date = None, None, None
@@ -397,7 +509,7 @@ class SvxParser:
         """
         return self._path_stack[-1]
 
-    def processLine(self, line: str):
+    def processLine(self, line: str, lineno: int = 0):
         """
         Process one line of a .svx file.
         """
@@ -409,7 +521,7 @@ class SvxParser:
         if tokens[0].startswith('*'):
             self.processCommand(*tokens)
         else:
-            self.processData(tokens)
+            self.processData(tokens, lineno)
 
     def parseFile(self, svxfile: Path | str):
         """
@@ -437,8 +549,8 @@ class SvxParser:
         self._path_stack.append(svxfile)
 
         with open(svxfile) as handle:
-            for line in handle:
-                self.processLine(line.strip())
+            for lineno, line in enumerate(handle, 1):
+                self.processLine(line.strip(), lineno)
 
         self._path_stack.pop()
 
@@ -518,7 +630,7 @@ class SvxParser:
                 Column.from_string(col) for col in ordering
             ])
 
-    def processData(self, tokens: List[str]):
+    def processData(self, tokens: List[str], lineno: int = 0):
         """
         Process data according the current data style.
         """
@@ -555,6 +667,8 @@ class SvxParser:
                     reading -= convert_unit(zero_error, zero_error_unit)
 
                 data[col] = reading
+
+        data[Column._FILE] = self._path_stack[-1].as_posix() + f":{lineno}"
 
         self._data_table.append(data)
 
@@ -694,6 +808,10 @@ def main():
 
         if filename == '--tro':
             formatter = VisualTopoFormatter()
+            continue
+
+        if filename == '--dups':
+            formatter = FindDuplicateFormatter()
             continue
 
         parser.parseFile(filename)
