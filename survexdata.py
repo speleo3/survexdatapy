@@ -411,7 +411,7 @@ class SvxParser:
         else:
             self.processData(tokens)
 
-    def parseFile(self, svxfile: Path):
+    def parseFile(self, svxfile: Path | str):
         """
         Parse a .svx file, given the context of previously parsed files.
         """
@@ -421,12 +421,18 @@ class SvxParser:
         if svxfile.suffix != '.svx':
             svxfile = svxfile.with_suffix(svxfile.suffix + '.svx')
 
-        if not svxfile.exists():
+        parent = self._path_stack[-1].parent if self._path_stack else Path()
+        svxfileabs = parent / svxfile
+
+        if not svxfileabs.exists():
+            # Python 3.12: glob(..., case_sensitive=False)
             pattern = re.sub(
                 r'[a-zA-Z]',
                 lambda c: f'[{c.group(0).lower()}{c.group(0).upper()}]',
                 str(svxfile))
-            svxfile = next(Path().glob(pattern))
+            svxfile = next(parent.glob(pattern))
+        else:
+            svxfile = svxfileabs
 
         self._path_stack.append(svxfile)
 
@@ -553,7 +559,7 @@ class SvxParser:
         self._data_table.append(data)
 
     def processInclude(self, filename: str):
-        self.parseFile(self.currentPath.parent / filename)
+        self.parseFile(filename)
 
     def processEquate(self, tokens: List[str]):
         """
