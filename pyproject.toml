@@ -1,0 +1,48 @@
+[project]
+name = "survexdata"
+version = "0.2"
+description = "Python module for reading Survex data files"
+authors = [
+    {name = "Thomas Holder"},
+]
+requires-python = ">=3.9"
+
+[project.urls]
+repository = "https://github.com/speleo3/survexdatapy"
+
+[tool.setuptools]
+py-modules = ['survexdata']
+
+[tool.yapf]
+column_limit = 88
+based_on_style = "pep8"
+allow_split_before_dict_value = false
+each_dict_entry_on_separate_line = false
+
+[tool.autopep8]
+ignore = [
+    "E501", # --max-line-length
+]
+
+[tool.ruff]
+extend-select = ["W", "B", "Q003"]
+ignore = [
+    "E501",     # Line too long
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["."]
+
+[tool.mypy]
+files = [
+    ".",
+]
+ignore_missing_imports = true
+explicit_package_bases = true
+
+# vi:sw=4
