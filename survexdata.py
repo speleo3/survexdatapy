@@ -18,6 +18,9 @@ import sys
 import shlex
 from pathlib import Path
 from enum import Enum, auto
+from typing import Any, Dict, List, Optional, Tuple
+
+NoSuchEnumError = KeyError
 
 
 class UpperCaseStringEnum(Enum):
@@ -29,13 +32,8 @@ class UpperCaseStringEnum(Enum):
         return name
 
     @classmethod
-    def from_string(cls, value):
-        value = value.upper()
-        return cls(cls.aliases().get(value, value))
-
-    @classmethod
-    def aliases(cls) -> dict:
-        return {}
+    def from_string(cls, value: str):
+        return cls[value.upper()]
 
 
 class Command(UpperCaseStringEnum):
@@ -58,8 +56,11 @@ class Command(UpperCaseStringEnum):
     INSTRUMENT = auto()
     REF = auto()
     SD = auto()
+    SET = auto()
+    SOLVE = auto()
     ALIAS = auto()
     REQUIRE = auto()
+    DECLINATION = auto()
 
 
 class DataStyle(UpperCaseStringEnum):
@@ -78,7 +79,9 @@ class Column(UpperCaseStringEnum):
     TO = auto()
     TAPE = auto()
     COMPASS = auto()
+    COUNTER = auto()
     CLINO = auto()
+    BACKTAPE = auto()
     BACKCOMPASS = auto()
     BACKCLINO = auto()
     FROMDEPTH = auto()
@@ -101,15 +104,21 @@ class Column(UpperCaseStringEnum):
     X = auto()
     Y = auto()
     Z = auto()
+    DATE = auto()  # custom
 
-    @classmethod
-    def aliases(cls):
-        return {
-            "LENGTH": "TAPE",
-            "BEARING": "COMPASS",
-            "GRADIENT": "CLINO",
-            "COUNT": "COUNTER",
-        }
+    # aliases
+    ALTITUDE = DZ
+    BACKLENGTH = BACKTAPE
+    BACKBEARING = BACKCOMPASS
+    BACKGRADIENT = BACKCLINO
+    BEARING = COMPASS
+    CEILING = UP
+    COUNT = COUNTER
+    EASTING = DX
+    FLOOR = DOWN
+    GRADIENT = CLINO
+    LENGTH = TAPE
+    NORTHING = DY
 
 
 class Units(UpperCaseStringEnum):
@@ -122,16 +131,19 @@ class Units(UpperCaseStringEnum):
     PERCENT = auto()
     QUADS = auto()
 
-    @classmethod
-    def aliases(cls):
-        return {
-            "METRIC": "METRES",
-            "METERS": "METRES",
-            "DEGS": "DEGREES",
-            "PERCENTAGE": "PERCENT",
-            "QUADRANTS": "QUADS",
-        }
+    # aliases
+    METRIC = METRES
+    METERS = METRES
+    DEGS = DEGREES
+    PERCENTAGE = PERCENT
+    QUADRANTS = QUADS
 
+
+STATION_COLUMNS = [
+    Column.FROM,
+    Column.TO,
+    Column.STATION,
+]
 
 DEFAULT_COLUMN_ORDER = [
     Column.FROM,
@@ -141,14 +153,14 @@ DEFAULT_COLUMN_ORDER = [
     Column.CLINO,
 ]
 
-DEFAULT_CALIBRATE = {
+DEFAULT_CALIBRATE: Dict[Column, Tuple[float, Units, float]] = {
     Column.TAPE: (0, Units.METRES, 1),
     Column.COMPASS: (0, Units.DEGREES, 1),
     Column.CLINO: (0, Units.DEGREES, 1),
     Column.DECLINATION: (0, Units.DEGREES, 1),
 }
 
-DEFAULT_UNITS = {
+DEFAULT_UNITS: Dict[Column, Tuple[float, Units]] = {
     Column.TAPE: (1, Units.METRES),
     Column.COMPASS: (1, Units.DEGREES),
     Column.CLINO: (1, Units.DEGREES),
@@ -156,9 +168,9 @@ DEFAULT_UNITS = {
 }
 
 UNIT_CONVERT = {
-    Units.METRES: 1,
+    Units.METRES: 1.0,
     Units.FEET: 0.3048,
-    Units.DEGREES: 1,
+    Units.DEGREES: 1.0,
     Units.GRADS: 0.9,
 }
 
@@ -170,6 +182,8 @@ NAMED_VALUES = {
 }
 
 ANONYMOUS_STATIONS = {'.', '..', '...'}
+
+DataDict = Dict[Column, Any]
 
 
 def convert_unit(reading: float, unit: Units) -> float:
@@ -222,6 +236,12 @@ class Formatter:
     def printFooter(self):
         pass
 
+    def printDate(self, data: dict):
+        pass
+
+    def printDeclination(self, data: dict):
+        pass
+
     def printDataLine(self, data: dict):
         print(data[Column.FROM],
               data[Column.TO],
@@ -255,24 +275,56 @@ class SpelixCsvFormatter(Formatter):
 
 
 class VisualTopoFormatter(Formatter):
-    def printHeader(self):
-        entrance = '0'
+    declination = 0
+    date = None, None, None
+    param_line_pending = True
+    colormask = 0b000
 
-        print(f"""Version 5.11
+    def printHeader(self):
+        print("""Version 5.11
 Verification 1
 
 Trou XXX,540900.0,5362363.0,UTM32
 Club XXX
-Entree {entrance}
 Toporobot 0
 Couleur 0,0,0
-
-Param Deca Degd Clino Degd 1.2048 Dir,Dir,Dir Arr 0,0,255 01/01/2021 A
-
-{entrance:11s}{entrance:22s}    0.00    0.00    0.00   0.00   0.00   0.00   0.00 N I * N
 """,
               end='',
               file=self.file)
+
+    def getRgb(self) -> tuple:
+        self.colormask += 1
+        if self.colormask == 0b111:
+            self.colormask = 1
+        return tuple(((self.colormask >> s) & 1) * 0xFF for s in (0, 1, 2))
+
+    def printPendingParamLine(self):
+        if not self.param_line_pending:
+            return
+
+        self.param_line_pending = False
+
+        def fmt(v, width):
+            return '-' * width if v is None else v.zfill(width)
+
+        year, month, day = self.date
+        red, green, blue = self.getRgb()
+
+        print(file=self.file)
+        print(
+            f"Param Deca Degd Clino Degd {self.declination:.4f} Dir,Dir,Dir Arr "
+            f"{red},{green},{blue} {fmt(day, 2)}/{fmt(month, 2)}/{fmt(year, 4)} A",
+            file=self.file)
+        print(file=self.file)
+
+    def printDate(self, data):
+        self.param_line_pending = True
+        self.date = data[Column.DATE]
+        assert len(self.date) == 3
+
+    def printDeclination(self, data):
+        self.param_line_pending = True
+        self.declination = data[Column.DECLINATION]
 
     def printDataLine(self, data):
         station_from = self.normalizeName(data[Column.FROM])
@@ -287,6 +339,7 @@ Param Deca Degd Clino Degd 1.2048 Dir,Dir,Dir Arr 0,0,255 01/01/2021 A
         assert len(station_from) < 12
         assert len(station_to) < 12
 
+        self.printPendingParamLine()
         print(
             f"{station_from:11s}{station_to:22s}"
             f"{data[Column.TAPE]:8.2f}{data[Column.COMPASS]:8.2f}"
@@ -298,14 +351,16 @@ class SvxParser:
     """
     Parser for Survex data files (*.svx)
     """
-    def __init__(self):
-        self._path_stack = []
-        self._prefixes = []
-        self._alias_stack = [{}]
+    def __init__(self) -> None:
+        self._path_stack: List[Path] = []
+        self._prefixes: List[str] = []
+        self._alias_stack: List[Dict[str, str]] = [{}]
         self._units_stack = [DEFAULT_UNITS.copy()]
         self._calibrate_stack = [DEFAULT_CALIBRATE.copy()]
-        self._data_style_stack = [(DataStyle.NORMAL, DEFAULT_COLUMN_ORDER)]
-        self._data_table = []
+        self._data_style_stack: List[Tuple[Optional[DataStyle], List[Column]]] = [
+            (DataStyle.NORMAL, DEFAULT_COLUMN_ORDER)
+        ]
+        self._data_table: List[DataDict] = []
 
     def iterdata(self):
         """
@@ -383,39 +438,29 @@ class SvxParser:
 
         return self
 
-    def processCommand(self, command: str, *args):
+    def processCommand(self, command: str, *_args):
         """
         Process a command.
         """
-        args = list(args)
+        args = list(_args)
 
         assert command.startswith('*')
         command = args.pop(0) if command == '*' else command[1:]
 
         try:
             command = Command.from_string(command)
-        except ValueError as ex:
+        except NoSuchEnumError as ex:
             warn(ex)
             return
 
         if command == Command.BEGIN:
-            assert len(args) <= 1
-            self._prefixes.append(args[0] if args else None)
-            self._data_style_stack.append(self._data_style_stack[-1])
-            self._alias_stack.append(self._alias_stack[-1].copy())
-            self._units_stack.append(self._units_stack[-1].copy())
-            self._calibrate_stack.append(self._calibrate_stack[-1].copy())
+            self.processBegin(*args)
         elif command == Command.END:
-            self._prefixes.pop()
-            self._data_style_stack.pop()
-            self._alias_stack.pop()
-            self._units_stack.pop()
-            self._calibrate_stack.pop()
+            self.processEnd(*args)
         elif command == Command.DATA:
             self.processDataHeader(*args)
         elif command == Command.INCLUDE:
-            assert len(args) == 1
-            self.parseFile(self.currentPath.parent / args[0])
+            self.processInclude(*args)
         elif command == Command.EQUATE:
             self.processEquate(args)
         elif command == Command.CALIBRATE:
@@ -424,6 +469,29 @@ class SvxParser:
             self.processUnits(args)
         elif command == Command.ALIAS:
             self.processAlias(args)
+        elif command == Command.DATE:
+            self.processDate(args)
+        elif command == Command.DECLINATION:
+            self.processDeclination(args)
+        else:
+            warn(command, 'not implemented', level='Info')
+
+    def processBegin(self, prefix: str = ""):
+        self._prefixes.append(prefix)
+        self._data_style_stack.append(self._data_style_stack[-1])
+        self._alias_stack.append(self._alias_stack[-1].copy())
+        self._units_stack.append(self._units_stack[-1].copy())
+        self._calibrate_stack.append(self._calibrate_stack[-1].copy())
+
+    def processEnd(self, prefix: str = ""):
+        prefix_begin = self._prefixes.pop()
+        if prefix and prefix.lower() != prefix_begin.lower():
+            raise ValueError(
+                f"'*end {prefix}' does not match '*begin {prefix_begin}'")
+        self._data_style_stack.pop()
+        self._alias_stack.pop()
+        self._units_stack.pop()
+        self._calibrate_stack.pop()
 
     def processDataHeader(self, style: str, *ordering):
         """
@@ -431,7 +499,7 @@ class SvxParser:
         """
         try:
             data_style = DataStyle.from_string(style)
-        except ValueError as ex:
+        except NoSuchEnumError as ex:
             self._data_style_stack[-1] = (None, [])
             warn(ex)
             return
@@ -444,7 +512,7 @@ class SvxParser:
                 Column.from_string(col) for col in ordering
             ])
 
-    def processData(self, tokens: list):
+    def processData(self, tokens: List[str]):
         """
         Process data according the current data style.
         """
@@ -453,9 +521,9 @@ class SvxParser:
         if data_style != DataStyle.NORMAL:
             return
 
-        data = dict(zip(data_order, tokens))
+        data: DataDict = dict(zip(data_order, tokens))
 
-        for col in [Column.FROM, Column.TO, Column.STATION]:
+        for col in STATION_COLUMNS:
             if col in data:
                 data[col] = self.withPrefix(data[col])
 
@@ -484,7 +552,10 @@ class SvxParser:
 
         self._data_table.append(data)
 
-    def processEquate(self, tokens: list):
+    def processInclude(self, filename: str):
+        self.parseFile(self.currentPath.parent / filename)
+
+    def processEquate(self, tokens: List[str]):
         """
         Process *EQUATE arguments.
         """
@@ -498,7 +569,7 @@ class SvxParser:
                 Column.CLINO: 0,
             })
 
-    def processAlias(self, tokens: list):
+    def processAlias(self, tokens: List[str]):
         """
         Process *ALIAS arguments.
         """
@@ -509,7 +580,7 @@ class SvxParser:
         else:
             self._alias_stack[-1].pop(tokens[1], None)
 
-    def processUnits(self, tokens: list):
+    def processUnits(self, tokens: List[str]):
         """
         Process *UNITS arguments.
         """
@@ -518,16 +589,35 @@ class SvxParser:
             return
 
         tokens = list(tokens)
-        unit = tokens.pop()
-        unit = Units.from_string(unit)
+        unit = Units.from_string(tokens.pop())
 
         factor = float(tokens.pop()) if tokens[-1][-1].isdigit() else 1
 
-        for quantity in tokens:
-            quantity = Column.from_string(quantity)
+        for quantitytok in tokens:
+            quantity = Column.from_string(quantitytok)
             self._units_stack[-1][quantity] = (factor, unit)
 
-    def processCalibrate(self, tokens: list):
+    def processDate(self, tokens: List[str]):
+        """
+        Process *DATE arguments.
+        """
+        datefrom, _, dateto = tokens[0].partition("-")
+        year, month, day = (datefrom.split(".") + [None, None])[:3]
+        self._data_table.append({Column.DATE: (year, month, day)})
+
+    def processDeclination(self, tokens: List[str]):
+        """
+        Process *DECLINATION arguments.
+        """
+        if tokens[0].lower() == "auto":
+            warn('*declination auto not implemented', level='Info')
+            return
+
+        declination = float(tokens[0])
+        assert tokens[1].lower().startswith("deg")
+        self._data_table.append({Column.DECLINATION: declination})
+
+    def processCalibrate(self, tokens: List[str]):
         """
         Process *CALIBRATE arguments.
         """
@@ -535,11 +625,11 @@ class SvxParser:
             self._calibrate_stack[-1] = DEFAULT_CALIBRATE.copy()
             return
 
-        quantities = []
-        for quantity in tokens:
+        quantities: List[Column] = []
+        for quantitytok in tokens:
             try:
-                quantities.append(Column.from_string(quantity))
-            except ValueError:
+                quantities.append(Column.from_string(quantitytok))
+            except NoSuchEnumError:
                 break
 
         idx = len(quantities)
@@ -550,7 +640,7 @@ class SvxParser:
         try:
             units = Units.from_string(tokens[len(quantities) + 1])
             idx += 1
-        except (ValueError, IndexError):
+        except (NoSuchEnumError, IndexError):
             units = None
 
         if idx < len(tokens):
@@ -570,7 +660,13 @@ class SvxParser:
         """
         formatter.printHeader()
 
-        for data in self.iterdata():
+        for data in self._data_table:
+            if Column.DATE in data:
+                formatter.printDate(data)
+
+            if Column.FROM not in data:
+                continue
+
             if formatter.skipAnonymousStations() and any(
                     station in ANONYMOUS_STATIONS
                     for station in [data[Column.FROM], data[Column.TO]]):
