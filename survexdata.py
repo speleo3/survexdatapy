@@ -37,6 +37,7 @@ class UpperCaseStringEnum(Enum):
 
 
 class Command(UpperCaseStringEnum):
+    CASE = auto()
     DATA = auto()
     BEGIN = auto()
     END = auto()
@@ -469,6 +470,7 @@ class SvxParser:
         self._alias_stack: List[Dict[str, str]] = [{}]
         self._units_stack = [DEFAULT_UNITS.copy()]
         self._calibrate_stack = [DEFAULT_CALIBRATE.copy()]
+        self._case_stack = ["tolower"]
         self._data_style_stack: List[Tuple[Optional[DataStyle], List[Column]]] = [
             (DataStyle.NORMAL, DEFAULT_COLUMN_ORDER)
         ]
@@ -491,11 +493,22 @@ class SvxParser:
         splitter.whitespace_split = True
         return list(splitter)
 
+    def caseConvert(self, name: str) -> str:
+        """
+        Convert name according to the `*case` command.
+        """
+        if self._case_stack[-1] == 'tolower':
+            return name.lower()
+        if self._case_stack[-1] == 'toupper':
+            return name.upper()
+        return name
+
     def withPrefix(self, station: str) -> str:
         """
         Full name of the given station.
         """
         station = self._alias_stack[-1].get(station, station)
+        station = self.caseConvert(station)
 
         if station in ANONYMOUS_STATIONS:
             return station
@@ -591,15 +604,19 @@ class SvxParser:
             self.processDate(args)
         elif command == Command.DECLINATION:
             self.processDeclination(args)
+        elif command == Command.CASE:
+            self.processCase(args)
         else:
             warn(command, 'not implemented', level='Info')
 
     def processBegin(self, prefix: str = ""):
+        prefix = self.caseConvert(prefix)
         self._prefixes.append(prefix)
         self._data_style_stack.append(self._data_style_stack[-1])
         self._alias_stack.append(self._alias_stack[-1].copy())
         self._units_stack.append(self._units_stack[-1].copy())
         self._calibrate_stack.append(self._calibrate_stack[-1].copy())
+        self._case_stack.append(self._case_stack[-1])
 
     def processEnd(self, prefix: str = ""):
         prefix_begin = self._prefixes.pop()
@@ -610,6 +627,7 @@ class SvxParser:
         self._alias_stack.pop()
         self._units_stack.pop()
         self._calibrate_stack.pop()
+        self._case_stack.pop()
 
     def processDataHeader(self, style: str, *ordering):
         """
@@ -773,6 +791,15 @@ class SvxParser:
 
         for quantity in quantities:
             self._calibrate_stack[-1][quantity] = (zero_error, units, scale)
+
+    def processCase(self, tokens: List[str]):
+        """
+        Process *CASE arguments.
+        """
+        value = tokens[0].lower()
+        if value not in ["preserve", "toupper", "tolower"]:
+            warn(f'Unknown *case {value}')
+        self._case_stack[-1] = value
 
     def dump(self, formatter: Formatter = SvxFormatter()):
         """

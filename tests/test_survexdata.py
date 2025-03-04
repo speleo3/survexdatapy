@@ -61,6 +61,23 @@ def test_VisualTopoFormatter():
         assert row[86] == 'N'
         assert row[38] == '.'
 
+def test_case():
+    parser = survexdata.SvxParser()
+    parser.parseFile(DATA / "case.svx")
+    it = parser.iterdata()
+    leg = next(it)
+    assert leg[survexdata.Column.FROM] == "a"
+    assert leg[survexdata.Column.TO] == "b"
+    leg = next(it)
+    assert leg[survexdata.Column.FROM] == "b"
+    assert leg[survexdata.Column.TO] == "C"
+    leg = next(it)
+    assert leg[survexdata.Column.FROM] == "C"
+    assert leg[survexdata.Column.TO] == "A"
+    leg = next(it)
+    assert leg[survexdata.Column.FROM] == "A"
+    assert leg[survexdata.Column.TO] == "a"
+
 def test_dataiter():
     parser = survexdata.SvxParser()
     parser.parseFile(DATA / "example.svx")
@@ -142,7 +159,7 @@ prev  : {FROM: 'B', TO: 'C', TAPE: 20.0, COMPASS: 30.0, CLINO: 40.6, _FILE: '/du
 
 @pytest.mark.parametrize("filename,rows_ref", [
     ("example.svx", []),
-    ("dups.svx", REF_DUPS_ROWS),
+    ("dups-outer.svx", REF_DUPS_ROWS),
 ])
 def test_FindDuplicateFormatter(filename: str, rows_ref: list):
     stream = io.StringIO()

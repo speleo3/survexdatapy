@@ -1,0 +1,2 @@
+*case preserve
+*include dups

@@ -1,3 +1,5 @@
+*case preserve
+
 *data default
 
 A B 10 20 30

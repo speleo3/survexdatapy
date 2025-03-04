@@ -1,0 +1,7 @@
+a B 1 0 0
+*case preserve
+b C 1 90 0
+*case TOUPPER
+c a 1 180 0
+*CASE PRESERVE
+A a 1 270 0
