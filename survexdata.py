@@ -523,7 +523,7 @@ class SvxParser:
         else:
             self.processData(tokens, lineno)
 
-    def parseFile(self, svxfile: Path | str):
+    def parseFile(self, svxfile: "Path | str"):
         """
         Parse a .svx file, given the context of previously parsed files.
         """
