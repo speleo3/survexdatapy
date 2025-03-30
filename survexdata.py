@@ -17,6 +17,7 @@ import re
 import sys
 import shlex
 from pathlib import Path
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -269,7 +270,7 @@ class SpelixCsvFormatter(Formatter):
         return True
 
     def printHeader(self):
-        print('"Von";"Bis";"Länge";"Neigung";"Richtung";"L";"R";"O";"U";"RV"',
+        print('"Von";"Bis";"Länge";"Neigung";"Richtung";"L";"R";"O";"U";"RV";"Zeile"',
               file=self.file)
 
     def printDataLine(self, data):
@@ -278,7 +279,7 @@ class SpelixCsvFormatter(Formatter):
                      for col in [Column.FROM, Column.TO]) + ';' +
             ';'.join(f'"{data[col]}"'
                      for col in [Column.TAPE, Column.CLINO, Column.COMPASS]) +
-            ';"0"' * 5,
+            ';"0"' * 5 + ';"' + data.get(Column._FILE, "") + '"',
             file=self.file)
 
 
@@ -460,12 +461,21 @@ Couleur 0,0,0
             file=self.file)
 
 
+@dataclass
+class LineInfo:
+    path: Path
+    lineno: int = 0
+
+    def __str__(self) -> str:
+        return self.path.as_posix() + f":{self.lineno}"
+
+
 class SvxParser:
     """
     Parser for Survex data files (*.svx)
     """
     def __init__(self) -> None:
-        self._path_stack: List[Path] = []
+        self._path_stack: List[LineInfo] = []
         self._prefixes: List[str] = []
         self._alias_stack: List[Dict[str, str]] = [{}]
         self._units_stack = [DEFAULT_UNITS.copy()]
@@ -520,9 +530,15 @@ class SvxParser:
         """
         Current .svx file path.
         """
-        return self._path_stack[-1]
+        return self._path_stack[-1].path
 
-    def processLine(self, line: str, lineno: int = 0):
+    def formatLineInfo(self) -> str:
+        """
+        Current .svx file path and line number.
+        """
+        return str(self._path_stack[-1])
+
+    def processLine(self, line: str):
         """
         Process one line of a .svx file.
         """
@@ -534,7 +550,7 @@ class SvxParser:
         if tokens[0].startswith('*'):
             self.processCommand(*tokens)
         else:
-            self.processData(tokens, lineno)
+            self.processData(tokens)
 
     def parseFile(self, svxfile: "Path | str"):
         """
@@ -546,7 +562,7 @@ class SvxParser:
         if svxfile.suffix != '.svx':
             svxfile = svxfile.with_suffix(svxfile.suffix + '.svx')
 
-        parent = self._path_stack[-1].parent if self._path_stack else Path()
+        parent = self._path_stack[-1].path.parent if self._path_stack else Path()
         svxfileabs = parent / svxfile
 
         if not svxfileabs.exists():
@@ -559,11 +575,13 @@ class SvxParser:
         else:
             svxfile = svxfileabs
 
-        self._path_stack.append(svxfile)
+        lineinfo = LineInfo(svxfile)
+        self._path_stack.append(lineinfo)
 
         with open(svxfile) as handle:
             for lineno, line in enumerate(handle, 1):
-                self.processLine(line.strip(), lineno)
+                lineinfo.lineno = lineno
+                self.processLine(line.strip())
 
         self._path_stack.pop()
 
@@ -648,7 +666,7 @@ class SvxParser:
                 Column.from_string(col) for col in ordering
             ])
 
-    def processData(self, tokens: List[str], lineno: int = 0):
+    def processData(self, tokens: List[str]):
         """
         Process data according the current data style.
         """
@@ -686,7 +704,7 @@ class SvxParser:
 
                 data[col] = reading
 
-        data[Column._FILE] = self._path_stack[-1].as_posix() + f":{lineno}"
+        data[Column._FILE] = self.formatLineInfo()
 
         self._data_table.append(data)
 
@@ -705,6 +723,7 @@ class SvxParser:
                 Column.TAPE: 0,
                 Column.COMPASS: 0,
                 Column.CLINO: 0,
+                Column._FILE: self.formatLineInfo(),
             })
 
     def processAlias(self, tokens: List[str]):

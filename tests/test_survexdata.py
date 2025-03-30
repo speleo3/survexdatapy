@@ -21,7 +21,7 @@ def test_SpelixCsvFormatter():
 
     assert len(rows) == 5
     assert rows[0] == [
-        "Von", "Bis", "Länge", "Neigung", "Richtung", "L", "R", "O", "U", "RV"
+        "Von", "Bis", "Länge", "Neigung", "Richtung", "L", "R", "O", "U", "RV", "Zeile"
     ]
     assert rows[1][:2] == ["a", "b"]
     assert rows[4][:2] == ["d", "e"]
