@@ -9,6 +9,25 @@ import pytest
 HERE = pathlib.Path(__file__).parent
 DATA = HERE / "data"
 
+
+def test_findFile():
+    path = DATA / "example.svx"
+    assert m.findFile(DATA / "example.svx", case_sensitive=True) == path
+    assert m.findFile(DATA / "example", case_sensitive=True) == path
+    assert m.findFile(DATA / "Example.svx", case_sensitive=False) == path
+    assert m.findFile(DATA / "Example", case_sensitive=False) == path
+    assert m.findFile(DATA / "EXAMPLE.svx", case_sensitive=False) == path
+    assert m.findFile(DATA / "EXAMPLE", case_sensitive=False) == path
+    with pytest.raises(FileNotFoundError):
+        m.findFile(DATA / "Example.svx", case_sensitive=True)
+    with pytest.raises(FileNotFoundError):
+        m.findFile(DATA / "Example", case_sensitive=True)
+    with pytest.raises(FileNotFoundError):
+        m.findFile(DATA / "EXAMPLE.svx", case_sensitive=True)
+    with pytest.raises(FileNotFoundError):
+        m.findFile(DATA / "EXAMPLE", case_sensitive=True)
+
+
 def test_SpelixCsvFormatter():
     stream = io.StringIO()
 

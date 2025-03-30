@@ -19,7 +19,7 @@ import shlex
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 NoSuchEnumError = KeyError
 
@@ -210,6 +210,37 @@ def warn(*args, level="Warning"):
     Print a warning to STDERR
     """
     print(f"{level}:", *args, file=sys.stderr)
+
+
+def glob_case_insensitive(parent: Path, pattern: str) -> Iterable[Path]:
+    """
+    Python 3.12: parent.glob(pattern, case_sensitive=False)
+    """
+    pattern = re.sub(r'[a-zA-Z]',
+                     lambda c: f'[{c.group(0).lower()}{c.group(0).upper()}]', pattern)
+    return parent.glob(pattern)
+
+
+def findFile(path: Path, *, case_sensitive: bool = True, suffix: str = ".svx") -> Path:
+    """
+    Find file, either as exact match, with added suffix, case insensitive or
+    case insensitive with added suffix.
+    """
+    if path.exists():
+        return path
+
+    withsuffix = path.parent / (path.name + suffix)
+    if withsuffix.exists():
+        return withsuffix
+
+    if not case_sensitive:
+        for globbed in glob_case_insensitive(path.parent, path.name):
+            return globbed
+
+        for globbed in glob_case_insensitive(path.parent, path.name + suffix):
+            return globbed
+
+    raise FileNotFoundError(path)
 
 
 class Formatter:
@@ -554,26 +585,10 @@ class SvxParser:
 
     def parseFile(self, svxfile: "Path | str"):
         """
-        Parse a .svx file, given the context of previously parsed files.
+        Parse a .svx file
         """
         warn('parseFile', svxfile, level='Info')
         svxfile = Path(svxfile)
-
-        if svxfile.suffix != '.svx':
-            svxfile = svxfile.with_suffix(svxfile.suffix + '.svx')
-
-        parent = self._path_stack[-1].path.parent if self._path_stack else Path()
-        svxfileabs = parent / svxfile
-
-        if not svxfileabs.exists():
-            # Python 3.12: glob(..., case_sensitive=False)
-            pattern = re.sub(
-                r'[a-zA-Z]',
-                lambda c: f'[{c.group(0).lower()}{c.group(0).upper()}]',
-                str(svxfile))
-            svxfile = next(parent.glob(pattern))
-        else:
-            svxfile = svxfileabs
 
         lineinfo = LineInfo(svxfile)
         self._path_stack.append(lineinfo)
@@ -709,7 +724,10 @@ class SvxParser:
         self._data_table.append(data)
 
     def processInclude(self, filename: str):
-        self.parseFile(filename)
+        filename = filename.replace("\\", "/")
+        path = self._path_stack[-1].path.parent / filename
+        path = findFile(path, case_sensitive=False)
+        self.parseFile(path)
 
     def processEquate(self, tokens: List[str]):
         """
@@ -864,7 +882,7 @@ def main():
             formatter = FindDuplicateFormatter()
             continue
 
-        parser.parseFile(filename)
+        parser.parseFile(findFile(filename))
 
     parser.dump(formatter)
 
