@@ -829,6 +829,10 @@ def main():
     formatter = SvxFormatter()
 
     for filename in sys.argv[1:]:
+        if filename == '--help':
+            print(f"usage: python {sys.argv[0]} [--spelix|--tro|--dups] <svxfiles...>")
+            return
+
         if filename == '--spelix':
             formatter = SpelixCsvFormatter()
             continue
