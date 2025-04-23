@@ -438,6 +438,9 @@ Couleur 0,0,0
 """,
               end='',
               file=self.file)
+        if self.entrances:
+            entrance = self.normalizeName(self.entrances[0])
+            print(f"Entree {entrance}", file=self.file)
 
     def getRgb(self) -> tuple:
         self.colormask += 1
