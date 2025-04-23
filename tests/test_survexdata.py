@@ -43,8 +43,8 @@ def test_SpelixCsvFormatter():
     assert rows[0] == [
         "Von", "Bis", "Länge", "Neigung", "Richtung", "L", "R", "O", "U", "RV", "Zeile"
     ]
-    assert rows[1][:2] == ["a", "b"]
-    assert rows[4][:2] == ["d", "e"]
+    assert rows[1][:2] == ["A", "B"]
+    assert rows[4][:2] == ["D", "E"]
     assert [float(v) for v in rows[1][2:5]] == [10.0, 30.0, 20.0]
     assert [float(v) for v in rows[4][2:5]] == [13.0, 39.0, 26.0]
 
