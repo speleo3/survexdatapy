@@ -1,0 +1,14 @@
+*begin Foo
+
+*entrance A
+*entrance C
+
+*data default
+
+A B 10 20 30
+
+*flags duplicate 
+
+B C 11 22 33
+
+*end Foo
