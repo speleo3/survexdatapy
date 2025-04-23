@@ -1019,9 +1019,9 @@ class SvxParser:
         formatter.printFooter()
 
 
-def main():
+def main() -> None:
     parser = SvxParser()
-    formatter = SvxFormatter()
+    formatter: Formatter = SvxFormatter()
 
     for filename in sys.argv[1:]:
         if filename == '--help':
@@ -1044,7 +1044,7 @@ def main():
             formatter = FindDuplicateFormatter()
             continue
 
-        parser.parseFile(findFile(filename))
+        parser.parseFile(findFile(Path(filename)))
 
     parser.dump(formatter)
 
