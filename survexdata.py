@@ -308,7 +308,7 @@ class SpelixCsvFormatter(Formatter):
 
     def printDataLine(self, data):
         print(
-            ';'.join(f'"{data[col].lower()}"'
+            ';'.join(f'"{data[col]}"'
                      for col in [Column.FROM, Column.TO]) + ';' +
             ';'.join(f'"{data[col]}"'
                      for col in [Column.TAPE, Column.CLINO, Column.COMPASS]) +
