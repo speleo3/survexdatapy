@@ -296,6 +296,35 @@ class SvxFormatter(Formatter):
         print('*data default', file=self.file)
 
 
+class TherionFormatter(Formatter):
+    _separator = '.'
+
+    def printHeader(self):
+        print('centreline', file=self.file)
+        print('data normal from to tape compass clino', file=self.file)
+
+    def printFooter(self):
+        print('endcentreline', file=self.file)
+
+    def normalizeName(self, name: str) -> str:
+        if name in ANONYMOUS_STATIONS:
+            return name if name == '.' else '-'
+        parts = name.split(self._separator)
+        name = parts.pop()
+        if not parts:
+            return name
+        parts.reverse()
+        return f'{name}@{self._separator.join(parts)}'
+
+    def printDataLine(self, data: dict):
+        print(self.normalizeName(data[Column.FROM]),
+              self.normalizeName(data[Column.TO]),
+              data[Column.TAPE],
+              data[Column.COMPASS],
+              data[Column.CLINO],
+              file=self.file)
+
+
 class SpelixCsvFormatter(Formatter):
     def skipAnonymousStations(self):
         return True
@@ -499,6 +528,104 @@ class LineInfo:
 
     def __str__(self) -> str:
         return self.path.as_posix() + f":{self.lineno}"
+
+
+def reverseLeg(data: dict) -> dict:
+    """
+    Make a copy of the given leg in backsight direction
+    """
+    return data | {
+        Column.FROM: data[Column.TO],
+        Column.TO: data[Column.FROM],
+        Column.COMPASS: (-data[Column.COMPASS]) % 360,
+        Column.CLINO: -data[Column.CLINO],
+    }
+
+
+class SexyTopoFormatter(Formatter):
+    def __init__(self, file=None):
+        super().__init__(file)
+        self._sexy_legs = {}
+        self._sexy_postponed = []
+
+    def printFooter(self):
+        self._process_postponed()
+        index_iter = iter(range(0x7FFFFFFF))
+        stations = [{
+            "name": name,
+            "eeDirection": "right",
+            "comment": "",
+            "legs": [leg | {
+                "index": next(index_iter),
+            } for leg in legs],
+        } for (name, legs) in self._sexy_legs.items()]
+        data = {
+            "sexyTopoVersionName": "1.6.1",
+            "sexyTopoVersionCode": 64,
+            "name": "survexdump",
+            "stations": stations,
+        }
+        import json
+        json.dump(data, self.file, indent=2)
+
+    def printDataLine(self, data: dict):
+        data, ready = self._get_data_ready(data)
+        if not ready:
+            self._sexy_postponed.append(data)
+            return
+        self._sexy_add_leg(data)
+
+    def _process_postponed(self):
+        """
+        Process postponed legs until there are none left
+        """
+        while self._sexy_postponed:
+            postponed = self._sexy_postponed
+            count = len(postponed)
+            assert count > 0
+            self._sexy_postponed = []
+            for data in postponed:
+                self.printDataLine(data)
+            if count == len(self._sexy_postponed):
+                raise UserWarning("disconnected survey")
+
+    def _get_data_ready(self, data: dict) -> Tuple[dict, bool]:
+        """
+        Check if the given leg is connected to the already processed legs.
+        If only the TO station is connected, then reverse the leg.
+
+        Return:
+          The leg, reversed if necessary
+          True if the leg is connected
+        """
+        if data[Column.FROM] in self._sexy_legs or not self._sexy_legs:
+            return data, True
+        if data[Column.TO] in self._sexy_legs:
+            assert data[Column.TO] not in ANONYMOUS_STATIONS
+            return reverseLeg(data), True
+        return data, False
+
+    def _sexy_add_leg(self, data: dict):
+        """
+        Add a leg to the processed legs
+        """
+        assert data[Column.FROM] not in ANONYMOUS_STATIONS
+        legs = self._sexy_legs.setdefault(data[Column.FROM], [])
+
+        destination = data[Column.TO]
+        if destination in ANONYMOUS_STATIONS:
+            destination = "-"
+        else:
+            self._sexy_legs.setdefault(destination, [])
+
+        legs.append({
+            "distance": data[Column.TAPE],
+            "azimuth": data[Column.COMPASS],
+            "inclination": data[Column.CLINO],
+            "destination": destination,
+            "wasShotBackwards": False,
+            "promotedFrom": [],
+        })
 
 
 class SvxParser:
@@ -874,8 +1001,16 @@ def main():
             formatter = SpelixCsvFormatter()
             continue
 
+        if filename == '--therion':
+            formatter = TherionFormatter()
+            continue
+
         if filename == '--tro':
             formatter = VisualTopoFormatter()
+            continue
+
+        if filename == '--sexy':
+            formatter = SexyTopoFormatter()
             continue
 
         if filename == '--dups':
