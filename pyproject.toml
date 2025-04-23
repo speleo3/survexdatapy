@@ -24,7 +24,7 @@ ignore = [
     "E501", # --max-line-length
 ]
 
-[tool.ruff]
+[tool.ruff.lint]
 extend-select = ["W", "B", "Q003"]
 ignore = [
     "E501",     # Line too long

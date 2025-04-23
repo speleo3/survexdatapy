@@ -5,6 +5,7 @@ import csv
 import io
 import pathlib
 import pytest
+from xml.etree import ElementTree
 
 HERE = pathlib.Path(__file__).parent
 DATA = HERE / "data"
@@ -79,6 +80,32 @@ def test_VisualTopoFormatter():
         assert len(row.rstrip()) == 93
         assert row[86] == 'N'
         assert row[38] == '.'
+
+
+def test_VisualTopoXmlFormatter():
+    stream = io.StringIO()
+
+    parser = survexdata.SvxParser()
+    parser.parseFile(DATA / "example.svx")
+    parser.dump(survexdata.VisualTopoXmlFormatter(stream))
+
+    root = ElementTree.fromstring(stream.getvalue())
+    visees = root.findall("Mesures/Param/Visee")
+    assert len(visees) == 5
+    assert visees[0].get("Arr") == "A"
+    assert visees[0].get("Dep") == "A"
+    assert visees[1].get("Arr") == "B"
+    assert visees[3].get("Dep") == "C"
+
+
+def test_flags():
+    parser = survexdata.SvxParser()
+    parser.parseFile(DATA / "flags.svx")
+    assert parser._entrance_set == {"foo.a", "foo.c"}
+    legs = list(parser.iterdata())
+    assert legs[0].get(survexdata.Column.FLAGS) is None
+    assert legs[1].get(survexdata.Column.FLAGS) == {"duplicate": True}
+
 
 def test_case():
     parser = survexdata.SvxParser()

@@ -20,6 +20,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from xml.etree import ElementTree as etree
 
 NoSuchEnumError = KeyError
 
@@ -108,6 +109,7 @@ class Column(UpperCaseStringEnum):
     Z = auto()
     DATE = auto()  # custom
     NEWLINE = auto()
+    FLAGS = auto()
 
     # aliases
     ALTITUDE = DZ
@@ -192,6 +194,8 @@ NAMED_VALUES = {
 
 ANONYMOUS_STATIONS = {'.', '..', '...'}
 
+VT_MAXLEN = 11
+
 DataDict = Dict[Column, Any]
 
 
@@ -252,11 +256,6 @@ class Formatter:
         self._survey_mapping = {}
         self._name_mapping = {}
 
-    def normalizeName(self, name: str) -> str:
-        return str(
-            self._name_mapping.setdefault(name.lower(),
-                                          len(self._name_mapping)))
-
     def normalizeStationName(self, name: str) -> str:
         survey, dot, station = name.rpartition('.')
         if not survey:
@@ -269,6 +268,9 @@ class Formatter:
 
     def skipAnonymousStations(self) -> bool:
         return False
+
+    def setEntrances(self, entrances: Iterable[str]):
+        self.entrances = list(entrances)
 
     def printHeader(self):
         pass
@@ -471,18 +473,33 @@ Couleur 0,0,0
         self.param_line_pending = True
         self.declination = data[Column.DECLINATION]
 
+    def normalizeName(self, name: str, prefix: str = "_") -> str:
+        if len(name) < VT_MAXLEN and not name.startswith(prefix):
+            return name
+        num = len(self._name_mapping)
+        num = self._name_mapping.setdefault(name, num)
+        unique = f"{prefix}{num}"
+        n = VT_MAXLEN - len(unique) - 2
+        if n > 0:
+            return unique + "_" + name[-n:]
+        return unique
+
     def printDataLine(self, data):
         station_from = self.normalizeName(data[Column.FROM])
+        flags = data.get(Column.FLAGS, {})
 
         if data[Column.TO] in ANONYMOUS_STATIONS:
             station_to = "*"
             suffix = "E M *"
         else:
             station_to = self.normalizeName(data[Column.TO])
-            suffix = "I * N"
+            if flags.get("surface") or flags.get("duplicate"):
+                suffix = "E * N"
+            else:
+                suffix = "I * N"
 
-        assert len(station_from) < 12
-        assert len(station_to) < 12
+        assert len(station_from) < VT_MAXLEN, station_from
+        assert len(station_to) < VT_MAXLEN, station_to
 
         self.printPendingParamLine()
         print(
@@ -501,6 +518,112 @@ class LineInfo:
         return self.path.as_posix() + f":{self.lineno}"
 
 
+class VisualTopoXmlFormatter(VisualTopoFormatter):
+    _param: etree.Element | None = None
+
+    def printHeader(self):
+        self._root = etree.fromstring("""
+<VisualTopo>
+  <Version>5.23</Version>
+  <Cavite>
+    <Entrees/>
+  </Cavite>
+  <Mesures/>
+  <Configuration/>
+</VisualTopo>
+""")
+        self._mesures = self._root.find("Mesures")
+        assert self._mesures is not None
+
+    def printFooter(self):
+        if self.entrances:
+            node = self._root.find("Cavite/Entrees")
+            assert node is not None
+            etree.SubElement(
+                node, "Entree", {
+                    "X": "0.0",
+                    "Y": "0.0",
+                    "Z": "0.0",
+                    "Station": self.entrances[0],
+                    "Ref": "1",
+                })
+
+        etree.indent(self._root, space=" ")
+        self.file.write('<?xml version="1.0" encoding="utf-8" standalone="no"?>\n')
+        self.file.write(etree.tostring(self._root, encoding="unicode"))
+
+    def printPendingParamLine(self):
+        if not self.param_line_pending:
+            return
+
+        self.param_line_pending = False
+
+        year, month, day = self.date
+        red, green, blue = self.getRgb()
+
+        self._param = etree.SubElement(
+            self._mesures, "Param", {
+                "InstrDist": "Deca",
+                "UnitDir": "Degd",
+                "InstrPte": "Clino",
+                "UnitPte": "Degd",
+                "Declin": str(self.declination),
+                "SensDir": "Dir",
+                "SensPte": "Dir",
+                "SensLar": "Dir",
+                "DimPt": "Arr",
+                "Coul": f"{red},{green},{blue}",
+                "DeclinAuto": "M",  # A
+            })
+
+        if year is not None:
+            self._param.set("Date", f"{day or '--'}/{month or '--'}/{year}")
+
+    def insertOriginPoint(self, station: str):
+        assert self._param is not None
+        etree.SubElement(
+            self._param, "Visee", {
+                "Dep": station,
+                "Arr": station,
+                "Long": "0.0",
+                "Az": "0.0",
+                "Pte": "0.0",
+            })
+
+    def printDataLine(self, data):
+        flags = data.get(Column.FLAGS, {})
+        station_to = data[Column.TO]
+
+        exclude = (
+            station_to in ANONYMOUS_STATIONS  #
+            or flags.get("surface")  #
+            or flags.get("duplicate")  #
+        )
+
+        is_first = self._param is None
+
+        self.printPendingParamLine()
+        assert self._param is not None
+
+        if is_first:
+            # Without this, I get a "No origin point" error
+            self.insertOriginPoint(data[Column.FROM])
+
+        node = etree.SubElement(
+            self._param, "Visee", {
+                "Dep": data[Column.FROM],
+                "Long": f"{data[Column.TAPE]}",
+                "Az": f"{data[Column.COMPASS]}",
+                "Pte": f"{data[Column.CLINO]}",
+            })
+
+        if station_to not in ANONYMOUS_STATIONS:
+            node.set("Arr", station_to)
+
+        if exclude:
+            node.set("Exc", "E")
+
+
 class SvxParser:
     """
     Parser for Survex data files (*.svx)
@@ -516,6 +639,8 @@ class SvxParser:
             (DataStyle.NORMAL, DEFAULT_COLUMN_ORDER)
         ]
         self._data_table: List[DataDict] = []
+        self._flags_stack: List[Dict[str, bool]] = [{}]
+        self._entrance_set: set[str] = set()
 
     def iterdata(self):
         """
@@ -637,6 +762,10 @@ class SvxParser:
             self.processDate(args)
         elif command == Command.DECLINATION:
             self.processDeclination(args)
+        elif command == Command.ENTRANCE:
+            self.processEntrance(args)
+        elif command == Command.FLAGS:
+            self.processFlags(args)
         elif command == Command.CASE:
             self.processCase(args)
         else:
@@ -650,6 +779,7 @@ class SvxParser:
         self._units_stack.append(self._units_stack[-1].copy())
         self._calibrate_stack.append(self._calibrate_stack[-1].copy())
         self._case_stack.append(self._case_stack[-1])
+        self._flags_stack.append(self._flags_stack[-1].copy())
 
     def processEnd(self, prefix: str = ""):
         prefix_begin = self._prefixes.pop()
@@ -661,6 +791,7 @@ class SvxParser:
         self._units_stack.pop()
         self._calibrate_stack.pop()
         self._case_stack.pop()
+        self._flags_stack.pop()
 
     def processDataHeader(self, style: str, *ordering):
         """
@@ -720,6 +851,10 @@ class SvxParser:
                 data[col] = reading
 
         data[Column._FILE] = self.formatLineInfo()
+
+        flags = self._flags_stack[-1]
+        if flags:
+            data[Column.FLAGS] = flags.copy()
 
         self._data_table.append(data)
 
@@ -792,6 +927,25 @@ class SvxParser:
         assert tokens[1].lower().startswith("deg")
         self._data_table.append({Column.DECLINATION: declination})
 
+    def processEntrance(self, tokens: List[str]):
+        """
+        Process *ENTRANCE arguments.
+        """
+        station = self.withPrefix(tokens[0])
+        self._entrance_set.add(station)
+
+    def processFlags(self, tokens: List[str]):
+        """
+        Process *FLAGS arguments.
+        """
+        value = True
+        for tok in tokens:
+            if tok == "not":
+                value = False
+            else:
+                self._flags_stack[-1][tok] = value
+                value = True
+
     def processCalibrate(self, tokens: List[str]):
         """
         Process *CALIBRATE arguments.
@@ -838,15 +992,19 @@ class SvxParser:
             warn(f'Unknown *case {value}')
         self._case_stack[-1] = value
 
-    def dump(self, formatter: Formatter = SvxFormatter()):
+    def dump(self, formatter: Formatter):
         """
         Dump the data with the given formatter.
         """
+        formatter.setEntrances(self._entrance_set)
         formatter.printHeader()
 
         for data in self._data_table:
             if Column.DATE in data:
                 formatter.printDate(data)
+
+            if Column.DECLINATION in data:
+                formatter.printDeclination(data)
 
             if Column.FROM not in data:
                 continue
@@ -867,7 +1025,7 @@ def main():
 
     for filename in sys.argv[1:]:
         if filename == '--help':
-            print(f"usage: python {sys.argv[0]} [--spelix|--tro|--dups] <svxfiles...>")
+            print(f"usage: python {sys.argv[0]} [--spelix|--tro|--trox|--dups] <svxfiles...>")
             return
 
         if filename == '--spelix':
@@ -876,6 +1034,10 @@ def main():
 
         if filename == '--tro':
             formatter = VisualTopoFormatter()
+            continue
+
+        if filename == '--trox':
+            formatter = VisualTopoXmlFormatter()
             continue
 
         if filename == '--dups':
