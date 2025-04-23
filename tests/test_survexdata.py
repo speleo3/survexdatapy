@@ -82,6 +82,20 @@ def test_VisualTopoFormatter():
         assert row[38] == '.'
 
 
+def test_VisualTopoFormatter_flags():
+    stream = io.StringIO()
+
+    parser = survexdata.SvxParser()
+    parser.parseFile(DATA / "flags.svx")
+    parser.dump(survexdata.VisualTopoFormatter(stream))
+
+    rows = stream.getvalue().splitlines()
+
+    assert rows[7] in ("Entree foo.a", "Entree foo.c")
+    assert rows[11][88] == 'I'
+    assert rows[12][88] == 'E'
+
+
 def test_VisualTopoXmlFormatter():
     stream = io.StringIO()
 
