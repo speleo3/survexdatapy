@@ -522,7 +522,7 @@ class LineInfo:
 
 
 class VisualTopoXmlFormatter(VisualTopoFormatter):
-    _param: etree.Element | None = None
+    _param: Optional[etree.Element] = None
 
     def printHeader(self):
         self._root = etree.fromstring("""
