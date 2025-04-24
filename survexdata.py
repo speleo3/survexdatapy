@@ -169,6 +169,8 @@ DEFAULT_CALIBRATE: Dict[Column, Tuple[float, Units, float]] = {
     Column.COMPASS: (0, Units.DEGREES, 1),
     Column.CLINO: (0, Units.DEGREES, 1),
     Column.DECLINATION: (0, Units.DEGREES, 1),
+    Column.DEPTH: (0, Units.METRES, 1),
+    Column.DEPTHCHANGE: (0, Units.METRES, 1),
 }
 
 DEFAULT_UNITS: Dict[Column, Tuple[float, Units]] = {
@@ -176,6 +178,8 @@ DEFAULT_UNITS: Dict[Column, Tuple[float, Units]] = {
     Column.COMPASS: (1, Units.DEGREES),
     Column.CLINO: (1, Units.DEGREES),
     Column.DECLINATION: (1, Units.DEGREES),
+    Column.DEPTH: (1, Units.METRES),
+    Column.DEPTHCHANGE: (1, Units.METRES),
 }
 
 UNIT_CONVERT = {
@@ -504,6 +508,8 @@ Couleur 0,0,0
         assert len(station_from) < VT_MAXLEN, station_from
         assert len(station_to) < VT_MAXLEN, station_to
 
+        assert Column.CLINO in data, data
+
         self.printPendingParamLine()
         print(
             f"{station_from:11s}{station_to:22s}"
@@ -641,6 +647,7 @@ class SvxParser:
         self._data_style_stack: List[Tuple[Optional[DataStyle], List[Column]]] = [
             (DataStyle.NORMAL, DEFAULT_COLUMN_ORDER)
         ]
+        self._data_order_pending: List[Column] = []
         self._data_table: List[DataDict] = []
         self._flags_stack: List[Dict[str, bool]] = [{}]
         self._entrance_set: set[str] = set()
@@ -704,9 +711,11 @@ class SvxParser:
         tokens = list(self.splitLine(line))
 
         if not tokens or tokens == ['']:
+            self._data_order_pending = []
             return
 
         if tokens[0].startswith('*'):
+            self._data_order_pending = []
             self.processCommand(*tokens)
         else:
             self.processData(tokens)
@@ -821,16 +830,27 @@ class SvxParser:
         """
         data_style, data_order = self._data_style_stack[-1]
 
-        if data_style != DataStyle.NORMAL:
+        if data_style not in (DataStyle.NORMAL, DataStyle.DIVING):
             return
 
+        if self._data_order_pending:
+            data_order = self._data_order_pending
+            self._data_order_pending = []
+
         data: DataDict = dict(zip(data_order, tokens))
+
+        pending = data_order[len(data):]
+        if pending and pending[0] != Column.IGNOREALL:
+            if pending[0] == Column.NEWLINE:
+                self._data_order_pending = pending[1:]
+            else:
+                warn(f"Missing tokens for {pending}")
 
         for col in STATION_COLUMNS:
             if col in data:
                 data[col] = self.withPrefix(data[col])
 
-        for col in [Column.TAPE, Column.COMPASS, Column.CLINO]:
+        for col in [Column.TAPE, Column.COMPASS, Column.CLINO, Column.DEPTH, Column.DEPTHCHANGE]:
             if col in data:
                 try:
                     data[col] = NAMED_VALUES[data[col].upper()]
@@ -995,6 +1015,39 @@ class SvxParser:
             warn(f'Unknown *case {value}')
         self._case_stack[-1] = value
 
+    def promoteDivingLegs(self):
+        """
+        Promote data readings between DIVING stations to NORMAL legs with FROM,
+        TO and CLINO.
+        """
+        data_from: Optional[DataDict] = None
+        data_leg: Optional[DataDict] = None
+
+        for data in self._data_table:
+            if Column.FROM in data:
+                data_from = None
+                data_leg = None
+            elif Column.STATION in data:
+                if data_from and data_leg:
+                    data_leg[Column.FROM] = data_from[Column.STATION]
+                    data_leg[Column.TO] = data[Column.STATION]
+                    if Column.DEPTHCHANGE not in data_leg and Column.DEPTH in data:
+                        assert Column.DEPTH in data_from
+                        data_leg[Column.DEPTHCHANGE] = data[
+                            Column.DEPTH] - data_from[Column.DEPTH]
+                data_from = data
+                data_leg = None
+            elif Column.TAPE in data:
+                assert Column.TO not in data
+                assert data_leg is None
+                data_leg = data
+
+        for data in self._data_table:
+            if Column.CLINO not in data and Column.DEPTHCHANGE in data:
+                data[Column.CLINO] = math.degrees(
+                    math.atan2(data[Column.DEPTHCHANGE],
+                               data[Column.TAPE]))
+
     def dump(self, formatter: Formatter):
         """
         Dump the data with the given formatter.
@@ -1049,6 +1102,7 @@ def main() -> None:
 
         parser.parseFile(findFile(Path(filename)))
 
+    parser.promoteDivingLegs()
     parser.dump(formatter)
 
 
